@@ -43,7 +43,7 @@ class NeatekTinkoff
     {
         $this->params = $params[0];
         if (isset($params[1])) {
-            $this->db_params = $params[1];
+            $this->_db_params = $params[1];
         }
     }
 
@@ -117,7 +117,7 @@ class NeatekTinkoff
                     print_r($result->Message, true), $result->ErrorCode
                 );
             } else {
-                $this->__InsertPayment($result->Status, $result->PaymentId, $result->Amount, '', '', $result->PaymentURL);
+                $this->__updatePayment($result->OrderId, $result->Status, $result->PaymentId, $result->Amount, $result->PaymentURL);
             }
 
             $this->_last_result = $result;
@@ -177,6 +177,46 @@ class NeatekTinkoff
     }
 
     /**
+     * @return mixed
+     */
+    public function getDesc()
+    {
+        if (!isset($this->order['Description'])) {
+            return '';
+        }
+
+        if (!empty($this->order['Description'])) {
+            return $this->order['Description'];
+        }
+
+        return '';
+    }
+
+    /**
+     * @return mixed
+     */
+    public function getEmail()
+    {
+        if (!isset($this->order['DATA']['Email'])) {
+            return '';
+        }
+
+        if (!empty($this->order['DATA']['Email'])) {
+            return $this->order['DATA']['Email'];
+        }
+
+        return '';
+    }
+
+    /**
+     * @param $id
+     */
+    public function setOrderId($id = 0)
+    {
+        $this->order['OrderId'] = $id;
+    }
+
+    /**
      * @param array $params
      */
     public function Init($params = array())
@@ -206,7 +246,13 @@ class NeatekTinkoff
             isset($params['DATA']) &&
             isset($params['Receipt'])
         ) {
+            if ($this->__db_available()) {
+                $OrderId = $this->__InsertPayment('WAIT_API', 0, 0, $this->getEmail(), $this->getDesc(), '');
+                $this->setOrderId($OrderId);
+                $params['OrderId'] = $OrderId;
+            }
             return $this->__do_request(self::INIT_URL, json_encode($params, JSON_UNESCAPED_UNICODE));
+
         } else {
             $this->show_error('Please fill data: TerminalKey, Amount, OrderId, TerminalKey, DATA, Receipt.<br>Current params:<br>' . print_r($params, true), 415);
         }
@@ -464,10 +510,10 @@ class NeatekTinkoff
     private function __getConnection()
     {
         try {
-            $username   = $this->db_params['db_user'];
-            $password   = $this->db_params['db_pass'];
-            $host       = $this->db_params['db_host'];
-            $db         = $this->db_params['db_name'];
+            $username   = $this->_db_params['db_user'];
+            $password   = $this->_db_params['db_pass'];
+            $host       = $this->_db_params['db_host'];
+            $db         = $this->_db_params['db_name'];
             $connection = new PDO("mysql:dbname=$db;host=$host", $username, $password, array(PDO::MYSQL_ATTR_INIT_COMMAND => "SET NAMES utf8"));
             $connection->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
             return $connection;
@@ -486,16 +532,105 @@ class NeatekTinkoff
      */
     private function __InsertPayment($status = '', $paymentId = 0, $Amount = 0, $Email = '', $desc = '', $redirect = '')
     {
+        if (!$this->__db_available()) {
+            return;
+        }
+
         $conn = $this->__getConnection();
+
         $stmt = $conn->prepare("INSERT INTO `payments` (`status`, `PaymentId`, `Amount`, `Email`, `Description`, `Redirect`) VALUES (:status, :paymentId, :amount, :email, :description, :redirect)");
-        $stmt->execute(array(
-            'status'      => strip_tags($status),
-            'paymentId'   => (int)$paymentId,
-            'amount'      => (int)$Amount,
-            'email'       => strip_tags($Email),
-            'description' => strip_tags($desc),
-            'redirect'    => strip_tags($redirect),
-        ));
+        $stmt->bindParam(':status', $status, PDO::PARAM_STR);
+        $stmt->bindParam(':paymentId', $paymentId, PDO::PARAM_INT);
+        $stmt->bindParam(':amount', $Amount, PDO::PARAM_INT);
+        $stmt->bindParam(':email', $Email, PDO::PARAM_STR);
+        $stmt->bindParam(':description', $desc, PDO::PARAM_STR);
+        $stmt->bindParam(':redirect', $redirect, PDO::PARAM_STR);
+        $stmt->execute();
+
         return (int)$conn->lastInsertId();
+    }
+
+    /**
+     * @param $OrderId
+     * @param $paymentId
+     * @param $Amount
+     * @param $redirect
+     */
+    private function __updatePayment($OrderId = 0, $status = 'NEW', $paymentId = 0, $Amount = 0, $redirect = '')
+    {
+        if (!$this->__db_available()) {
+            return;
+        }
+
+        $conn = $this->__getConnection();
+
+        $stmt = $conn->prepare("UPDATE `payments` SET `status`=:status, `PaymentId`=:paymentId, `Amount`=:amount, `Redirect`=:redirect WHERE `order_id`=:orderid");
+        $stmt->bindParam(':status', $status, PDO::PARAM_STR);
+        $stmt->bindParam(':paymentId', $paymentId, PDO::PARAM_INT);
+        $stmt->bindParam(':amount', $Amount, PDO::PARAM_INT);
+        $stmt->bindParam(':redirect', $redirect, PDO::PARAM_STR);
+        $stmt->bindParam(':orderid', $OrderId, PDO::PARAM_INT);
+        $stmt->execute();
+    }
+
+    private function __db_available()
+    {
+        if (!empty($this->_db_params) && is_array($this->_db_params) && !empty($this->_db_params['db_name'])) {
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * @param  $OrderId
+     * @param  $status
+     * @param  $CardId
+     * @param  $Pan
+     * @param  $ExpDate
+     * @return null
+     */
+    private function __updateResultPayment($OrderId = 0, $status = 'NEW', $CardId = 0, $Pan = '', $ExpDate = 0)
+    {
+        if (!$this->__db_available()) {
+            return;
+        }
+
+        $conn = $this->__getConnection();
+
+        $stmt = $conn->prepare("UPDATE `payments` SET `status`=:status, `CardId`=:CardId, `Pan`=:Pan, `ExpDate`=:ExpDate WHERE `order_id`=:orderid");
+        $stmt->bindParam(':status', $status, PDO::PARAM_STR);
+        $stmt->bindParam(':CardId', $CardId, PDO::PARAM_INT);
+        $stmt->bindParam(':Pan', $Pan, PDO::PARAM_STR);
+        $stmt->bindParam(':ExpDate', $ExpDate, PDO::PARAM_INT);
+        $stmt->bindParam(':orderid', $OrderId, PDO::PARAM_INT);
+        $stmt->execute();
+    }
+
+    public function doRedirect()
+    {
+        if (!empty($this->GetRedirectURL())) {
+            header("X-Redirect: Powered by neatek");
+            header("Location: " . $this->GetRedirectURL());
+        }
+    }
+
+    /**
+     * @return mixed
+     */
+    public function getResultResponse()
+    {
+        $response = file_get_contents('php://input');
+        if (!empty($response)) {
+            $response = json_decode($response);
+
+            if ($this->__db_available()) {
+                $this->__updateResultPayment($response->OrderId, $response->Status, $response->CardId, $response->Pan, $response->ExpDate);
+            }
+
+            return $response;
+        }
+
+        return false;
     }
 }
