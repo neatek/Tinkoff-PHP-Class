@@ -7,7 +7,7 @@ class NeatekTinkoff
 {
     const API_URL  = 'https://securepay.tinkoff.ru/v2/';
     const INIT_URL = self::API_URL . 'Init/';
-    const DEBUG    = 1;
+    const DEBUG    = 0;
 
     /* database config */
     /**
@@ -237,7 +237,7 @@ class NeatekTinkoff
             $params['DATA'] = (object)$params['DATA'];
         }
 
-        $this->pre($params);
+        //$this->pre($params);
 
         if (
             isset($params['TerminalKey']) &&
@@ -615,7 +615,7 @@ class NeatekTinkoff
         if (!empty($this->GetRedirectURL())) {
             header("X-Redirect: Powered by neatek");
             header("Location: " . $this->GetRedirectURL());
-            exit;
+            die();
         }
 
         die('Empty ->GetRedirectURL();');
@@ -684,7 +684,7 @@ class NeatekTinkoff
             }
         }
 
-        echo 'OK';
+        echo "OK";
         die();
     }
 
@@ -694,6 +694,8 @@ class NeatekTinkoff
      */
     public function debug($data = array(), $name = '')
     {
-        file_put_contents('debug' . date('dmY') . '.log', date('[H:i:s] ') . $name . "\r\nRESULT:::\r\n" . print_r($data, true) . "\r\n=====\r\n", FILE_APPEND);
+        if (self::DEBUG > 0) {
+            file_put_contents('debug' . date('dmY') . '.log', date('[H:i:s] ') . $name . "\r\nRESULT:::\r\n" . print_r($data, true) . "\r\n=====\r\n", FILE_APPEND);
+        }
     }
 }
