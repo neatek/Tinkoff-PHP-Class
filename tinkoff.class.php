@@ -7,6 +7,7 @@ class NeatekTinkoff
 {
     const API_URL  = 'https://securepay.tinkoff.ru/v2/';
     const INIT_URL = self::API_URL . 'Init/';
+    const DEBUG    = 1;
 
     /* database config */
     /**
@@ -247,7 +248,7 @@ class NeatekTinkoff
             isset($params['Receipt'])
         ) {
             if ($this->__db_available()) {
-                $OrderId = $this->__InsertPayment('WAIT_API', 0, 0, $this->getEmail(), $this->getDesc(), '');
+                $OrderId = $this->__InsertPayment('WAIT_API', 0, 0, $this->getEmail(), $this->getDesc(), '', $this->genToken($params));
                 $this->setOrderId($OrderId);
                 $params['OrderId'] = $OrderId;
             }
@@ -530,7 +531,7 @@ class NeatekTinkoff
      * @param $desc
      * @param $redirect
      */
-    private function __InsertPayment($status = '', $paymentId = 0, $Amount = 0, $Email = '', $desc = '', $redirect = '')
+    private function __InsertPayment($status = '', $paymentId = 0, $Amount = 0, $Email = '', $desc = '', $redirect = '', $token = '')
     {
         if (!$this->__db_available()) {
             return;
@@ -538,13 +539,14 @@ class NeatekTinkoff
 
         $conn = $this->__getConnection();
 
-        $stmt = $conn->prepare("INSERT INTO `payments` (`status`, `PaymentId`, `Amount`, `Email`, `Description`, `Redirect`) VALUES (:status, :paymentId, :amount, :email, :description, :redirect)");
+        $stmt = $conn->prepare("INSERT INTO `payments` (`status`, `PaymentId`, `Amount`, `Email`, `Description`, `Redirect`, `Token`) VALUES (:status, :paymentId, :amount, :email, :description, :redirect, :token)");
         $stmt->bindParam(':status', $status, PDO::PARAM_STR);
         $stmt->bindParam(':paymentId', $paymentId, PDO::PARAM_INT);
         $stmt->bindParam(':amount', $Amount, PDO::PARAM_INT);
         $stmt->bindParam(':email', $Email, PDO::PARAM_STR);
         $stmt->bindParam(':description', $desc, PDO::PARAM_STR);
         $stmt->bindParam(':redirect', $redirect, PDO::PARAM_STR);
+        $stmt->bindParam(':token', $token, PDO::PARAM_STR);
         $stmt->execute();
 
         return (int)$conn->lastInsertId();
@@ -590,7 +592,7 @@ class NeatekTinkoff
      * @param  $ExpDate
      * @return null
      */
-    private function __updateResultPayment($OrderId = 0, $status = 'NEW', $CardId = 0, $Pan = '', $ExpDate = 0)
+    private function __updateResultPayment($OrderId = 0, $status = 'NEW', $CardId = 0, $Pan = '', $ExpDate = 0, $RebillId = 0)
     {
         if (!$this->__db_available()) {
             return;
@@ -598,11 +600,12 @@ class NeatekTinkoff
 
         $conn = $this->__getConnection();
 
-        $stmt = $conn->prepare("UPDATE `payments` SET `status`=:status, `CardId`=:CardId, `Pan`=:Pan, `ExpDate`=:ExpDate WHERE `order_id`=:orderid");
+        $stmt = $conn->prepare("UPDATE `payments` SET `status`=:status, `CardId`=:CardId, `Pan`=:Pan, `ExpDate`=:ExpDate, `RebillId`=:RebillId WHERE `order_id`=:orderid");
         $stmt->bindParam(':status', $status, PDO::PARAM_STR);
         $stmt->bindParam(':CardId', $CardId, PDO::PARAM_INT);
         $stmt->bindParam(':Pan', $Pan, PDO::PARAM_STR);
         $stmt->bindParam(':ExpDate', $ExpDate, PDO::PARAM_INT);
+        $stmt->bindParam(':RebillId', $RebillId, PDO::PARAM_INT);
         $stmt->bindParam(':orderid', $OrderId, PDO::PARAM_INT);
         $stmt->execute();
     }
@@ -612,6 +615,48 @@ class NeatekTinkoff
         if (!empty($this->GetRedirectURL())) {
             header("X-Redirect: Powered by neatek");
             header("Location: " . $this->GetRedirectURL());
+            exit;
+        }
+
+        die('Empty ->GetRedirectURL();');
+    }
+
+    /**
+     * @param array $params
+     */
+    public function checkResultResponse($params = array())
+    {
+        if (!is_array($params)) {
+            $params = (array)$params;
+        }
+
+        $prev_token = $params['Token'];
+
+        $params['Success'] = (int)$params['Success'];
+        if ($params['Success'] > 0) {
+            $params['Success'] = (string) 'true';
+        } else {
+            $params['Success'] = (string) 'false';
+        }
+
+        unset($params['Token']);
+
+        $params['Password']    = $this->__getParam('Password');
+        $params['TerminalKey'] = $this->__getParam('TerminalKey');
+        ksort($params);
+        $x = implode('', $params);
+
+        if (self::DEBUG > 0) {
+            $this->debug($params, 'GENERATED_SHA');
+            $this->debug('NeededSHA: ' . $prev_token . PHP_EOL . 'ResultSHA:  [' . $x . ']  ' . hash('sha256', $x));
+        }
+
+        if (strcmp(strtolower($prev_token), strtolower(hash('sha256', $x))) == 0) {
+            if (self::DEBUG > 0) {
+                $this->debug('Fully valid sha256.', 'SUCCESS_CHECK_SHA256');
+            }
+
+            return true;
         }
     }
 
@@ -624,13 +669,31 @@ class NeatekTinkoff
         if (!empty($response)) {
             $response = json_decode($response);
 
-            if ($this->__db_available()) {
-                $this->__updateResultPayment($response->OrderId, $response->Status, $response->CardId, $response->Pan, $response->ExpDate);
+            if (self::DEBUG > 0) {
+                $this->debug($response);
             }
 
-            return $response;
+            if ($this->checkResultResponse($response)) {
+                if ($this->__db_available()) {
+                    if (!isset($response->RebillId)) {
+                        $this->__updateResultPayment($response->OrderId, $response->Status, $response->CardId, $response->Pan, $response->ExpDate, 0);
+                    } else {
+                        $this->__updateResultPayment($response->OrderId, $response->Status, $response->CardId, $response->Pan, $response->ExpDate, $response->RebillId);
+                    }
+                }
+            }
         }
 
-        return false;
+        echo 'OK';
+        die();
+    }
+
+    /**
+     * @param array   $data
+     * @param $name
+     */
+    public function debug($data = array(), $name = '')
+    {
+        file_put_contents('debug' . date('dmY') . '.log', date('[H:i:s] ') . $name . "\r\nRESULT:::\r\n" . print_r($data, true) . "\r\n=====\r\n", FILE_APPEND);
     }
 }
