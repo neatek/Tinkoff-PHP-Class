@@ -14,7 +14,7 @@ $tinkoff->SetRecurrent();
 $tinkoff->AddItem(
     array(
         'Name'     => 'Название товара 128 символов',
-        'Price'    => $sum,
+        'Price'    => '100', // В копейках
         "Quantity" => (float) 1.00,
         "Tax"      => "none",
     )
