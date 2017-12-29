@@ -1,6 +1,8 @@
 CREATE TABLE IF NOT EXISTS `payments` (
   `order_id` int(11) NOT NULL AUTO_INCREMENT COMMENT 'OrderID',
   `status` varchar(50) DEFAULT NULL COMMENT 'Order status',
+  `canceled` tinyint(6) DEFAULT '0',
+  `automatic` tinyint(6) DEFAULT '0',
   `PaymentId` int(11) DEFAULT NULL COMMENT 'PaymentId from tinkoff',
   `Amount` int(11) DEFAULT NULL COMMENT 'Amount ',
   `Email` varchar(96) DEFAULT NULL COMMENT 'Email of client',
@@ -13,5 +15,6 @@ CREATE TABLE IF NOT EXISTS `payments` (
   `Recurrent` varchar(10) NOT NULL DEFAULT 'N',
   `Token` varchar(86) DEFAULT NULL,
   `timestamp` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `last_recurrent` timestamp NULL DEFAULT NULL,
   PRIMARY KEY (`order_id`)
 ) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8;
