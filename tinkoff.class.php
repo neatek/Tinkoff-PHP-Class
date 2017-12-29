@@ -5,9 +5,10 @@ use PDO;
 
 class NeatekTinkoff
 {
-    const API_URL  = 'https://securepay.tinkoff.ru/v2/';
-    const INIT_URL = self::API_URL . 'Init/';
-    const DEBUG    = 1;
+    const API_URL    = 'https://securepay.tinkoff.ru/v2/';
+    const INIT_URL   = self::API_URL . 'Init/';
+    const CHARGE_URL = self::API_URL . 'Charge/';
+    const DEBUG      = 1;
 
     /* database config */
     /**
@@ -76,7 +77,7 @@ class NeatekTinkoff
      * @param $api
      * @param array  $params
      */
-    private function __do_request($api = '', $params = array())
+    private function __do_request($api = '', $params = array(), $c_db = 1)
     {
 
         if (empty($api) || empty($params)) {
@@ -94,6 +95,7 @@ class NeatekTinkoff
             curl_setopt($curl, CURLOPT_SSL_VERIFYPEER, false);
             curl_setopt($curl, CURLOPT_POST, true);
             curl_setopt($curl, CURLOPT_POSTFIELDS, $params);
+            curl_setopt($curl, CURLOPT_IPRESOLVE, CURL_IPRESOLVE_V4);
             curl_setopt($curl, CURLOPT_HTTPHEADER, array(
                 'Content-Type: application/json',
                 'Content-Length: ' . strlen($params),
@@ -115,7 +117,6 @@ class NeatekTinkoff
             }
 
             if (isset($result->ErrorCode) && !empty($result->ErrorCode)) {
-
                 if (self::DEBUG > 0) {
                     $this->debug(
                         print_r($result->Message . "\r\n", true) . print_r($this->order, true),
@@ -127,7 +128,7 @@ class NeatekTinkoff
                     print_r($result->Message . "\r\n", true), $result->ErrorCode
                 );
 
-            } else {
+            } elseif ($c_db > 0) {
                 $this->__updatePayment($result->OrderId, $result->Status, $result->PaymentId, $result->Amount, $result->PaymentURL);
             }
 
@@ -232,9 +233,11 @@ class NeatekTinkoff
     }
 
     /**
-     * @param array $params
+     * @param  array    $params
+     * @param  $dopdesc //        If it will be automatic
+     * @return mixed
      */
-    public function Init($params = array())
+    public function Init($params = array(), $dopdesc = '')
     {
         if (empty($params)) {
             $params = $this->order;
@@ -258,8 +261,26 @@ class NeatekTinkoff
             $params['Recurrent'] = 'N';
         }
 
+        $desc = $this->getDesc();
+        if (empty($desc)) {
+            if (!empty($params['Description'])) {
+                $this->order['Description'] = $params['Description'];
+                $desc                       = $params['Description'];
+            }
+        }
+
+        $desc = $dopdesc . ' ' . $desc;
+
+        $email = $this->getEmail();
+        if (empty($email)) {
+            if (!empty($params['DATA']->Email)) {
+                $this->SetOrderEmail($params['DATA']->Email);
+                $email = $params['DATA']->Email;
+            }
+        }
+
         if ($this->__db_available()) {
-            $OrderId = $this->__InsertPayment('WAIT_API', 0, 0, $this->getEmail(), $this->getDesc(), '', $this->genToken($params), $params['Recurrent']);
+            $OrderId = $this->__InsertPayment('WAIT_API', 0, 0, $email, $desc, '', $this->genToken($params), $params['Recurrent'], $dopdesc);
             $this->setOrderId($OrderId);
             $params['OrderId'] = $OrderId;
         }
@@ -563,7 +584,7 @@ class NeatekTinkoff
      * @param $desc
      * @param $redirect
      */
-    private function __InsertPayment($status = '', $paymentId = 0, $Amount = 0, $Email = '', $desc = '', $redirect = '', $token = '', $Recurrent = 'N')
+    private function __InsertPayment($status = '', $paymentId = 0, $Amount = 0, $Email = '', $desc = '', $redirect = '', $token = '', $Recurrent = 'N', $dopdesc = '')
     {
         if (!$this->__db_available()) {
             return;
@@ -572,6 +593,10 @@ class NeatekTinkoff
         $conn = $this->__getConnection();
 
         $sql = "INSERT INTO `payments` (`status`, `PaymentId`, `Amount`, `Email`, `Description`, `Redirect`, `Token`, `Recurrent`) VALUES (:status, :paymentId, :amount, :email, :description, :redirect, :token, :recurrent)";
+
+        if (isset($dopdesc) && !empty($dopdesc)) {
+            $sql = "INSERT INTO `payments` (`status`, `automatic`, `PaymentId`, `Amount`, `Email`, `Description`, `Redirect`, `Token`, `Recurrent`) VALUES (:status, '1', :paymentId, :amount, :email, :description, :redirect, :token, :recurrent)";
+        }
 
         $stmt = $conn->prepare($sql);
         $stmt->bindParam(':status', $status, PDO::PARAM_STR);
@@ -751,5 +776,127 @@ class NeatekTinkoff
         if (self::DEBUG > 0) {
             file_put_contents('debug' . date('dmY') . '.log', date('[H:i:s] ') . $name . "\r\nRESULT:::\r\n" . print_r($data, true) . "\r\n=====\r\n", FILE_APPEND);
         }
+    }
+    /**
+     * @return mixed
+     */
+    public function getLatestForRecurrent()
+    {
+        if (!$this->__db_available()) {
+            return;
+        }
+
+        $conn       = $this->__getConnection();
+        $prev_month = date("Y-m-d H:i:s", strtotime(date("Y-m-d H:i:s") . '-1 months')); // Only for 1 month / Recurrent Period
+        $sql        = "SELECT * FROM `payments` WHERE (`timestamp` < '" . $prev_month . "' AND `last_recurrent` IS NULL) OR `last_recurrent` < '" . $prev_month . "' AND status='CONFIRMED' AND Recurrent='Y' AND `canceled`='0' AND `automatic`='0' LIMIT 5";
+        if (self::DEBUG > 0) {
+            $this->debug($sql, 'SQL_GET_RECURRENTS');
+        }
+        $stmt     = $conn->query($sql);
+        $payments = array();
+        while ($row = $stmt->fetch()) {
+            if (self::DEBUG > 0) {
+                $this->debug(print_r($row, true), 'DO_RECURRENT');
+            }
+            $payments[] = $row;
+        }
+
+        return $payments;
+    }
+
+    public function ClearOrder()
+    {
+        $this->order = array();
+    }
+
+    /**
+     * @param $order_id
+     */
+    public function updateLastRecurrent($order_id = 0)
+    {
+        if (!$this->__db_available()) {
+            return;
+        }
+
+        $conn = $this->__getConnection();
+        $stmt = $conn->prepare('UPDATE `payments`SET last_recurrent=:date_recurrent WHERE order_id=:order_id');
+        $stmt->execute(array(
+            'date_recurrent' => date('Y-m-d H:i:s'),
+            'order_id'       => $order_id,
+        ));
+        if (self::DEBUG > 0) {
+            $this->debug(print_r($order_id, true) . "\r\n" . date('Y-m-d H:i:s'), 'UPDATE_LAST_RECURRENT');
+        }
+    }
+
+    //TerminalKey
+    //PaymentId
+    //RebillId
+    //Token
+
+    /**
+     * @param $result
+     */
+    public function Charge($result = '', $client = array())
+    {
+        $this->ClearOrder();
+        //$this->pre($result);
+        $token                = array();
+        $token['TerminalKey'] = $this->__getParam('TerminalKey');
+        $token['Password']    = $this->__getParam('Password');
+        $token['PaymentId']   = $result[0]->PaymentId;
+        $token['RebillId']    = $client['RebillId'];
+        ksort($token);
+
+        if (self::DEBUG > 0) {
+            $this->debug($token, 'CHARGE_TOKEN');
+        }
+
+        $x     = implode('', $token);
+        $token = hash('sha256', $x);
+
+        if (self::DEBUG > 0) {
+            $this->debug($token, 'RESULT_CHARGE_TOKEN');
+        }
+
+        $params = array(
+            'TerminalKey' => $this->__getParam('TerminalKey'),
+            'PaymentId'   => $result[0]->PaymentId,
+            'RebillId'    => $client['RebillId'],
+            'Token'       => $token,
+        );
+
+        if ($curl = curl_init()) {
+            $params = json_encode($params);
+            curl_setopt($curl, CURLOPT_URL, self::CHARGE_URL);
+            curl_setopt($curl, CURLOPT_FOLLOWLOCATION, true);
+            curl_setopt($curl, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($curl, CURLOPT_SSL_VERIFYPEER, false);
+            curl_setopt($curl, CURLOPT_POST, true);
+            curl_setopt($curl, CURLOPT_POSTFIELDS, $params);
+            curl_setopt($curl, CURLOPT_IPRESOLVE, CURL_IPRESOLVE_V4);
+            curl_setopt($curl, CURLOPT_HTTPHEADER, array(
+                'Content-Type: application/json',
+                'Content-Length: ' . strlen($params),
+            ));
+            $response = curl_exec($curl);
+            $httpcode = curl_getinfo($curl, CURLINFO_HTTP_CODE);
+            curl_close($curl);
+            //{"Success":false,"ErrorCode":"10","Message":"Метод Charge заблокирован для данного терминала."}
+        }
+        $this->pre($result);
+        if ($httpcode == 200) {
+            $response = json_decode($response);
+            if ($response->Success == true) {
+                $this->__updateResultPayment($result[0]->OrderId, 'CONFIRMED', $client['CardId'], $client['Pan'], $client['ExpDate'], $client['RebillId']);
+            } else {
+                $this->__updateResultPayment($result[0]->OrderId, 'ERROR', $client['CardId'], $client['Pan'], $client['ExpDate'], $client['RebillId']);
+            }
+
+            $this->updateLastRecurrent($client['order_id']);
+        }
+
+        $this->pre($response);
+        return $response;
     }
 }
