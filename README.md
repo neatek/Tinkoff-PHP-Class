@@ -67,7 +67,7 @@ if (!empty($recurrents)) {
          * Params for Init *
          */
         $params = array(
-            // Сумма всех
+            // Сумма всех Items.Amount 
              'Amount'      => (string)$client['Amount'],
             // Номер заказа берется из DB
              'OrderId'     => (string)$client['order_id'],
@@ -88,6 +88,7 @@ if (!empty($recurrents)) {
                     'Name'     => 'Описание товара 128 символов',
                     'Price'    => $client['Amount'],
                     "Quantity" => 1.00,
+                    // Amount = Price * Quantity
                     "Amount"   => $client['Amount'],
                     "Tax"      => "none",
                 ),
