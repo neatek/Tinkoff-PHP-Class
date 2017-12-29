@@ -115,9 +115,18 @@ class NeatekTinkoff
             }
 
             if (isset($result->ErrorCode) && !empty($result->ErrorCode)) {
+
+                if (self::DEBUG > 0) {
+                    $this->debug(
+                        print_r($result->Message . "\r\n", true) . print_r($this->order, true),
+                        '__do_request WRONG_PARAMETERS ERR#' . $result->ErrorCode
+                    );
+                }
+
                 $this->show_error(
-                    print_r($result->Message . "\r\n" . print_r($this->order, true), true), $result->ErrorCode
+                    print_r($result->Message . "\r\n", true), $result->ErrorCode
                 );
+
             } else {
                 $this->__updatePayment($result->OrderId, $result->Status, $result->PaymentId, $result->Amount, $result->PaymentURL);
             }
