@@ -1,14 +1,17 @@
 CREATE TABLE IF NOT EXISTS `payments` (
   `order_id` int(11) NOT NULL AUTO_INCREMENT COMMENT 'OrderID',
-  `status` varchar(50) NOT NULL DEFAULT '0' COMMENT 'Order status',
-  `PaymentId` int(11) NOT NULL DEFAULT '0' COMMENT 'PaymentId from tinkoff',
-  `Amount` int(11) NOT NULL DEFAULT '0' COMMENT 'Amount ',
-  `Email` varchar(96) NOT NULL DEFAULT '0' COMMENT 'Email of client',
-  `Description` varchar(256) NOT NULL DEFAULT '0' COMMENT 'Order description',
-  `Redirect` varchar(256) NOT NULL DEFAULT '0' COMMENT 'Redirect to payment',
+  `status` varchar(50) DEFAULT NULL COMMENT 'Order status',
+  `PaymentId` int(11) DEFAULT NULL COMMENT 'PaymentId from tinkoff',
+  `Amount` int(11) DEFAULT NULL COMMENT 'Amount ',
+  `Email` varchar(96) DEFAULT NULL COMMENT 'Email of client',
+  `Description` varchar(256) DEFAULT NULL COMMENT 'Order description',
+  `Redirect` varchar(256) DEFAULT NULL COMMENT 'Redirect to payment',
   `CardId` int(11) DEFAULT NULL COMMENT 'Card id',
   `Pan` varchar(50) DEFAULT NULL COMMENT 'Card number',
   `ExpDate` int(11) DEFAULT NULL COMMENT 'Exp. card date',
+  `RebillId` int(11) DEFAULT NULL,
+  `Recurrent` varchar(10) NOT NULL DEFAULT 'N',
+  `Token` varchar(86) DEFAULT NULL,
   `timestamp` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`order_id`)
-) ENGINE=InnoDB AUTO_INCREMENT=30 DEFAULT CHARSET=utf8;
+) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8;

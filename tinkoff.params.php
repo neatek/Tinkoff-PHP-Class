@@ -1,7 +1,9 @@
 <?php
+use NeatekTinkoff\NeatekTinkoff\NeatekTinkoff;
+
 require_once 'tinkoff.class.php';
-use NeatekTinkoff\NeatekTinkoff;
-$tinkoff = new NeatekTinkoff\NeatekTinkoff(
+
+$tinkoff = new NeatekTinkoff(
     array(
         array(
             'TerminalKey' => '',

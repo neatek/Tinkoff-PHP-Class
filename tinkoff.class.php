@@ -7,7 +7,7 @@ class NeatekTinkoff
 {
     const API_URL  = 'https://securepay.tinkoff.ru/v2/';
     const INIT_URL = self::API_URL . 'Init/';
-    const DEBUG    = 0;
+    const DEBUG    = 1;
 
     /* database config */
     /**
@@ -78,6 +78,7 @@ class NeatekTinkoff
      */
     private function __do_request($api = '', $params = array())
     {
+
         if (empty($api) || empty($params)) {
             return false;
         }
@@ -86,6 +87,7 @@ class NeatekTinkoff
             if (is_array($params)) {
                 $params = http_build_query($params);
             }
+
             curl_setopt($curl, CURLOPT_URL, $api);
             curl_setopt($curl, CURLOPT_FOLLOWLOCATION, true);
             curl_setopt($curl, CURLOPT_RETURNTRANSFER, true);
@@ -99,15 +101,14 @@ class NeatekTinkoff
 
             $result   = curl_exec($curl);
             $httpcode = curl_getinfo($curl, CURLINFO_HTTP_CODE);
+            curl_close($curl);
 
             if (empty($result)) {
                 $this->show_error(
                     'Can not create connection to ' . $api . ' with args '
-                    . print_r($params, true), $httpcode
+                    . print_r($this->order, true), $httpcode
                 );
             }
-
-            curl_close($curl);
 
             if (!empty($result) && $httpcode == 200) {
                 $result = json_decode($result);
@@ -115,10 +116,14 @@ class NeatekTinkoff
 
             if (isset($result->ErrorCode) && !empty($result->ErrorCode)) {
                 $this->show_error(
-                    print_r($result->Message, true), $result->ErrorCode
+                    print_r($result->Message . "\r\n" . print_r($this->order, true), true), $result->ErrorCode
                 );
             } else {
                 $this->__updatePayment($result->OrderId, $result->Status, $result->PaymentId, $result->Amount, $result->PaymentURL);
+            }
+
+            if (self::DEBUG > 0) {
+                $this->debug($params, '__do_request #' . $result->OrderId);
             }
 
             $this->_last_result = $result;
@@ -157,7 +162,7 @@ class NeatekTinkoff
             unset($params['Items']);
         }
 
-        if (!empty($this->__getParam('Password')) && $this->__getParam('TerminalKey')) {
+        if (!empty($this->__getParam('Password'))) {
             $params['Password']    = $this->__getParam('Password');
             $params['TerminalKey'] = $this->__getParam('TerminalKey');
             ksort($params);
@@ -226,8 +231,11 @@ class NeatekTinkoff
             $params = $this->order;
         }
 
-        $params = array('TerminalKey' => $this->__getParam('TerminalKey')) + $params;
-        $params = array('Token' => $this->genToken($params)) + $params;
+        //$params = array('TerminalKey' => $this->__getParam('TerminalKey')) + $params;
+        //$params = array('Token' => $this->genToken($params)) + $params;
+
+        $params['TerminalKey'] = $this->__getParam('TerminalKey');
+        $params['Token']       = $this->genToken($params);
 
         if (isset($params['Receipt']) && !is_object($params['Receipt'])) {
             $params['Receipt'] = (object)$params['Receipt'];
@@ -237,7 +245,15 @@ class NeatekTinkoff
             $params['DATA'] = (object)$params['DATA'];
         }
 
-        //$this->pre($params);
+        if (!isset($params['Recurrent'])) {
+            $params['Recurrent'] = 'N';
+        }
+
+        if ($this->__db_available()) {
+            $OrderId = $this->__InsertPayment('WAIT_API', 0, 0, $this->getEmail(), $this->getDesc(), '', $this->genToken($params), $params['Recurrent']);
+            $this->setOrderId($OrderId);
+            $params['OrderId'] = $OrderId;
+        }
 
         if (
             isset($params['TerminalKey']) &&
@@ -247,18 +263,21 @@ class NeatekTinkoff
             isset($params['DATA']) &&
             isset($params['Receipt'])
         ) {
-            if ($this->__db_available()) {
-                $OrderId = $this->__InsertPayment('WAIT_API', 0, 0, $this->getEmail(), $this->getDesc(), '', $this->genToken($params));
-                $this->setOrderId($OrderId);
-                $params['OrderId'] = $OrderId;
+            if (self::DEBUG > 0) {
+                $this->debug($params, 'Init #' . $params['OrderId']);
             }
-            return $this->__do_request(self::INIT_URL, json_encode($params, JSON_UNESCAPED_UNICODE));
 
+            return $this->__do_request(self::INIT_URL, json_encode($params, JSON_UNESCAPED_UNICODE));
         } else {
             $this->show_error('Please fill data: TerminalKey, Amount, OrderId, TerminalKey, DATA, Receipt.<br>Current params:<br>' . print_r($params, true), 415);
         }
 
         return false;
+    }
+
+    public function SetRecurrent()
+    {
+        $this->order['Recurrent'] = 'Y';
     }
 
     /**
@@ -292,6 +311,10 @@ class NeatekTinkoff
     {
         if (!is_array($params)) {
             return;
+        }
+
+        if (strlen($params['Name']) > 128) {
+            $params['Name'] = substr($params['Name'], 0, 127);
         }
 
         if (!isset($params['Name']) && !isset($params['Price']) ||
@@ -531,7 +554,7 @@ class NeatekTinkoff
      * @param $desc
      * @param $redirect
      */
-    private function __InsertPayment($status = '', $paymentId = 0, $Amount = 0, $Email = '', $desc = '', $redirect = '', $token = '')
+    private function __InsertPayment($status = '', $paymentId = 0, $Amount = 0, $Email = '', $desc = '', $redirect = '', $token = '', $Recurrent = 'N')
     {
         if (!$this->__db_available()) {
             return;
@@ -539,7 +562,9 @@ class NeatekTinkoff
 
         $conn = $this->__getConnection();
 
-        $stmt = $conn->prepare("INSERT INTO `payments` (`status`, `PaymentId`, `Amount`, `Email`, `Description`, `Redirect`, `Token`) VALUES (:status, :paymentId, :amount, :email, :description, :redirect, :token)");
+        $sql = "INSERT INTO `payments` (`status`, `PaymentId`, `Amount`, `Email`, `Description`, `Redirect`, `Token`, `Recurrent`) VALUES (:status, :paymentId, :amount, :email, :description, :redirect, :token, :recurrent)";
+
+        $stmt = $conn->prepare($sql);
         $stmt->bindParam(':status', $status, PDO::PARAM_STR);
         $stmt->bindParam(':paymentId', $paymentId, PDO::PARAM_INT);
         $stmt->bindParam(':amount', $Amount, PDO::PARAM_INT);
@@ -547,9 +572,16 @@ class NeatekTinkoff
         $stmt->bindParam(':description', $desc, PDO::PARAM_STR);
         $stmt->bindParam(':redirect', $redirect, PDO::PARAM_STR);
         $stmt->bindParam(':token', $token, PDO::PARAM_STR);
+        $stmt->bindParam(':recurrent', $Recurrent, PDO::PARAM_STR);
         $stmt->execute();
 
-        return (int)$conn->lastInsertId();
+        $last_id = (int)$conn->lastInsertId();
+
+        if (self::DEBUG > 0) {
+            $this->debug($sql, '__InsertPayment #OrderId:' . $last_id);
+        }
+
+        return $last_id;
     }
 
     /**
@@ -566,13 +598,19 @@ class NeatekTinkoff
 
         $conn = $this->__getConnection();
 
-        $stmt = $conn->prepare("UPDATE `payments` SET `status`=:status, `PaymentId`=:paymentId, `Amount`=:amount, `Redirect`=:redirect WHERE `order_id`=:orderid");
+        $sql = "UPDATE `payments` SET `status`=:status, `PaymentId`=:paymentId, `Amount`=:amount, `Redirect`=:redirect WHERE `order_id`=:orderid";
+
+        $stmt = $conn->prepare($sql);
         $stmt->bindParam(':status', $status, PDO::PARAM_STR);
         $stmt->bindParam(':paymentId', $paymentId, PDO::PARAM_INT);
         $stmt->bindParam(':amount', $Amount, PDO::PARAM_INT);
         $stmt->bindParam(':redirect', $redirect, PDO::PARAM_STR);
         $stmt->bindParam(':orderid', $OrderId, PDO::PARAM_INT);
         $stmt->execute();
+
+        if (self::DEBUG > 0) {
+            $this->debug($sql, '__updatePayment #OrderId:' . $OrderId);
+        }
     }
 
     private function __db_available()
@@ -600,7 +638,8 @@ class NeatekTinkoff
 
         $conn = $this->__getConnection();
 
-        $stmt = $conn->prepare("UPDATE `payments` SET `status`=:status, `CardId`=:CardId, `Pan`=:Pan, `ExpDate`=:ExpDate, `RebillId`=:RebillId WHERE `order_id`=:orderid");
+        $sql  = "UPDATE `payments` SET `status`=:status, `CardId`=:CardId, `Pan`=:Pan, `ExpDate`=:ExpDate, `RebillId`=:RebillId WHERE `order_id`=:orderid";
+        $stmt = $conn->prepare($sql);
         $stmt->bindParam(':status', $status, PDO::PARAM_STR);
         $stmt->bindParam(':CardId', $CardId, PDO::PARAM_INT);
         $stmt->bindParam(':Pan', $Pan, PDO::PARAM_STR);
@@ -608,6 +647,11 @@ class NeatekTinkoff
         $stmt->bindParam(':RebillId', $RebillId, PDO::PARAM_INT);
         $stmt->bindParam(':orderid', $OrderId, PDO::PARAM_INT);
         $stmt->execute();
+
+        if (self::DEBUG > 0) {
+            $this->debug($sql, '__updateResultPayment #OrderId:' . $OrderId);
+        }
+
     }
 
     public function doRedirect()
@@ -643,6 +687,7 @@ class NeatekTinkoff
 
         $params['Password']    = $this->__getParam('Password');
         $params['TerminalKey'] = $this->__getParam('TerminalKey');
+
         ksort($params);
         $x = implode('', $params);
 
