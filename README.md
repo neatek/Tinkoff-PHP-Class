@@ -5,7 +5,6 @@ If you want to accept Tinkoff back payments, do order on our site : https://neat
 
 Если вам нужна интеграция, закажите - https://neatek.ru/make-an-order
 
-neatek@icloud.com
+Описание класса - https://neatek.ru/php-class-tinkoff-back-payment
 
-Стоимость : От 5000р
-Время : 1-4 дня
+neatek@icloud.com
